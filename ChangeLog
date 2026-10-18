@@ -1,3 +1,6 @@
+Unreleased:
+	* CMake option WITH_DOUBLE_DOUBLE to use double-double arithmetic instead of quadmath for extended-precision Rys quadrature
+
 Version 6.2.0 (2026-10-16):
 	* New dipole and quadrupole gradient integrals
 	* New second order derivative integrals for int3c1e

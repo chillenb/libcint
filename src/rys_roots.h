@@ -11,7 +11,7 @@ int CINTrys_laguerre(int n, double x, double lower, double *roots, double *weigh
 int CINTlrys_laguerre(int n, double x, double lower, double *roots, double *weights);
 int CINTrys_jacobi(int n, double x, double lower, double *roots, double *weights);
 int CINTlrys_jacobi(int n, double x, double lower, double *roots, double *weights);
-#ifdef HAVE_QUADMATH_H
+#if defined(HAVE_QUADMATH_H) || defined(WITH_DOUBLE_DOUBLE)
 int CINTqrys_schmidt(int nroots, double x, double lower, double *roots, double *weights);
 int CINTqrys_laguerre(int n, double x, double lower, double *roots, double *weights);
 int CINTqrys_jacobi(int n, double x, double lower, double *roots, double *weights);
@@ -33,6 +33,11 @@ void fmt1_lerfc_like(long double *f, long double t, long double lower, int m);
 void qgamma_inc_like(__float128 *f, __float128 t, int m);
 void fmt_qerfc_like(__float128 *f, __float128 t, __float128 lower, int m);
 void fmt1_qerfc_like(__float128 *f, __float128 t, __float128 lower, int m);
+#elif defined(WITH_DOUBLE_DOUBLE)
+#include "dd_real.h"
+void ddgamma_inc_like(dd_real *f, double t, int m);
+void fmt_dderfc_like(dd_real *f, double t, double lower, int m);
+void fmt1_dderfc_like(dd_real *f, double t, double lower, int m);
 #else
 #define qgamma_inc_like         lgamma_inc_like
 #define fmt_qerfc_like          fmt_lerfc_like

@@ -577,4 +577,136 @@ void fmt1_qerfc_like(__float128 *f, __float128 t, __float128 lower, int m)
                 f[i-1] = val;
         }
 }
+#elif defined(WITH_DOUBLE_DOUBLE)
+#define SML_DD        1.0e-33
+
+static void fmt1_ddgamma_inc_like(dd_real *f, double t, int m)
+{
+        double b = m + .5;
+        double bi;
+        dd_real tt = dd_from_d(t);
+        dd_real e = dd_mul_pwr2(dd_exp(dd_from_d(-t)), .5);
+        dd_real x = e;
+        dd_real s = e;
+        double tol = SML_DD * e.hi;
+        int i;
+        for (bi = b + 1.; x.hi > tol; bi += 1.) {
+                x = dd_mul(x, dd_div_d(tt, bi));
+                s = dd_add(s, x);
+        }
+        f[m] = dd_div_d(s, b);
+        for (i = m; i > 0; i--) {
+                b -= 1;
+                f[i-1] = dd_div_d(dd_add(e, dd_mul_d(f[i], t)), b);
+        }
+}
+
+void ddgamma_inc_like(dd_real *f, double t, int m)
+{
+        if (t == 0) {
+                int i;
+                f[0] = dd_from_d(1.);
+                for (i = 1; i <= m; i++) {
+                        f[i] = dd_d_div(1., dd_from_d(2*i+1));
+                }
+        } else if (t < TURNOVER_POINT[m]) {
+                fmt1_ddgamma_inc_like(f, t, m);
+        } else {
+                int i;
+                dd_real tt = dd_sqrt(dd_from_d(t));
+                f[0] = dd_mul(dd_div(DD_SQRTPIE4, tt), dd_erf(tt));
+                dd_real e = dd_exp(dd_from_d(-t));
+                dd_real b = dd_d_div(.5, dd_from_d(t));
+                for (i = 1; i <= m; i++) {
+                        f[i] = dd_mul(b, dd_sub(dd_mul_d(f[i-1], 2*i-1), e));
+                }
+        }
+}
+
+static inline dd_real powdd_(dd_real base, int exponent)
+{
+        int i;
+        dd_real result = dd_from_d(1.);
+        for (i = 1; i <= exponent; i <<= 1) {
+                if (i & exponent) {
+                        result = dd_mul(result, base);
+                }
+                base = dd_sqr(base);
+        }
+        return result;
+}
+
+void fmt_dderfc_like(dd_real *f, double t, double lower, int m)
+{
+        if (lower == 0) {
+                return ddgamma_inc_like(f, t, m);
+        }
+
+        int i;
+        dd_real lower2 = dd_mul_dd(lower, lower);
+        // F[m] < .5*sqrt(pi/t) * erfc(low*tt)
+        if (t * lower * lower > ERFC_bound) {
+                for (i = 0; i <= m; i++) {
+                        f[i] = dd_from_d(0.);
+                }
+                return;
+        }
+
+        if (t == 0) {
+                dd_real e1 = dd_from_d(lower);
+                f[0] = dd_d_sub(1., e1);
+                for (i = 1; i <= m; i++) {
+                        e1 = dd_mul(e1, lower2);
+                        f[i] = dd_div_d(dd_d_sub(1., e1), 2*i+1);
+                }
+        } else if (t < TURNOVER_POINT[m]) {
+                fmt1_dderfc_like(f, t, lower, m);
+        } else {
+                dd_real tt = dd_sqrt(dd_from_d(t));
+                // erfc(a) - erfc(b) is more accurate than erf(b) - erf(a)
+                dd_real val = dd_mul(dd_div(DD_SQRTPIE4, tt),
+                                     dd_sub(dd_erfc(dd_mul_d(tt, lower)), dd_erfc(tt)));
+                f[0] = val;
+                dd_real e = dd_exp(dd_from_d(-t));
+                dd_real e1 = dd_mul_d(dd_exp(dd_neg(dd_mul_d(lower2, t))), lower);
+                dd_real b = dd_d_div(.5, dd_from_d(t));
+                for (i = 0; i < m; i++) {
+                        val = dd_mul(b, dd_add(dd_sub(dd_mul_d(val, 2*i+1), e), e1));
+                        e1 = dd_mul(e1, lower2);
+                        f[i+1] = val;
+                }
+        }
+}
+
+void fmt1_dderfc_like(dd_real *f, double t, double lower, int m)
+{
+        int i;
+        dd_real tt = dd_from_d(t);
+        dd_real lower2 = dd_mul_dd(lower, lower);
+        double b = m + .5;
+        double bi;
+        dd_real e = dd_mul_pwr2(dd_exp(dd_from_d(-t)), .5);
+        dd_real e1 = dd_mul_d(dd_mul_pwr2(dd_exp(dd_neg(dd_mul_d(lower2, t))), .5), lower);
+        e1 = dd_mul(e1, powdd_(lower2, m));
+        dd_real x = e;
+        dd_real x1 = e1;
+        dd_real s = dd_sub(e, e1);
+        dd_real div = dd_from_d(1.);
+        dd_real delta = s;
+        double tol = SML_DD * fabs(delta.hi);
+        for (bi = b + 1.; fabs(delta.hi) > tol; bi += 1.) {
+                div = dd_mul(div, dd_div_d(tt, bi));
+                x1 = dd_mul(x1, lower2);
+                delta = dd_mul(dd_sub(x, x1), div);
+                s = dd_add(s, delta);
+        }
+        dd_real val = dd_div_d(s, b);
+        f[m] = val;
+        for (i = m; i > 0; i--) {
+                b -= 1.;
+                e1 = dd_div(e1, lower2);
+                val = dd_div_d(dd_add(dd_sub(e, e1), dd_mul_d(val, t)), b);
+                f[i-1] = val;
+        }
+}
 #endif

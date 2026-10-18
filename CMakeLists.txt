@@ -40,9 +40,24 @@ include(GNUInstallDirs)
 #set(CMAKE_INCLUDE_CURRENT_DIR ON)
 
 list(APPEND CMAKE_MODULE_PATH "${PROJECT_SOURCE_DIR}/cmake")
-find_package(QUADMATH)
-if(QUADMATH_FOUND)
-  set(HAVE_QUADMATH_H 1 CACHE INTERNAL "Have QUADMATH")
+option(WITH_DOUBLE_DOUBLE "Use double-double arithmetic instead of quadmath for extended-precision Rys quadrature" off)
+if(WITH_DOUBLE_DOUBLE)
+  unset(HAVE_QUADMATH_H CACHE)
+  set(QUADMATH_FOUND FALSE)
+  string(TOUPPER "${CMAKE_BUILD_TYPE}" _cint_build_type)
+  if("${CMAKE_C_FLAGS} ${CMAKE_C_FLAGS_${_cint_build_type}}" MATCHES "-ffast-math|-Ofast")
+    message(WARNING "WITH_DOUBLE_DOUBLE is incompatible with -ffast-math/-Ofast")
+  endif()
+  message("Extended-precision Rys quadrature: double-double")
+else()
+  find_package(QUADMATH)
+  if(QUADMATH_FOUND)
+    set(HAVE_QUADMATH_H 1 CACHE INTERNAL "Have QUADMATH")
+    message("Extended-precision Rys quadrature: quadmath")
+  else()
+    unset(HAVE_QUADMATH_H CACHE)
+    message("Extended-precision Rys quadrature: long double")
+  endif()
 endif()
 
 include(CheckFunctionExists)
@@ -77,6 +92,13 @@ set(cintSrc
   src/autocode/intor2.c src/autocode/intor3.c src/autocode/intor4.c
   src/autocode/deriv3.c src/autocode/int1e_grids1.c
   src/autocode/deriv4.c src/autocode/lresc.c)
+
+if(WITH_DOUBLE_DOUBLE AND CMAKE_C_COMPILER_ID MATCHES "GNU|Clang|IntelLLVM")
+  # Error-free transformations in dd_real.h require IEEE semantics without
+  # FMA contraction or value-changing optimizations.
+  set_source_files_properties(src/fmt.c src/rys_roots.c src/rys_wheeler.c
+    PROPERTIES COMPILE_OPTIONS "-ffp-contract=off;-fno-fast-math")
+endif()
 
 #option(WITH_RANGE_COULOMB "Range separated Coulomb" on)
 if(WITH_RANGE_COULOMB)
@@ -303,7 +325,7 @@ set("CPACK_DEBIAN_DEV_PACKAGE_NAME" "${CPACK_DEBIAN_LIB_PACKAGE_NAME}-dev")
 
 set(CPACK_DEBIAN_LIB_PACKAGE_DEPENDS "libopenblas0-pthread")
 set(CPACK_DEBIAN_DEV_PACKAGE_DEPENDS "${CPACK_DEBIAN_LIB_PACKAGE_NAME},libopenblas-pthread-dev")
-if(HAVE_QUADMATH)
+if(QUADMATH_FOUND)
   set(CPACK_DEBIAN_LIB_PACKAGE_DEPENDS "${CPACK_DEBIAN_LIB_PACKAGE_DEPENDS},libquadmath0")
 endif()
 

@@ -6344,4 +6344,240 @@ int CINTqrys_jacobi(int n, double x, double lower, double *roots, double *weight
         }
         return qrys_wheeler_partial(n, alpha, beta, moments, roots, weights);
 }
-#endif  // HAVE_QUADMATH_H
+#elif defined(WITH_DOUBLE_DOUBLE)
+#include "rys_jacobi_dd.dat"
+
+static void ddlaguerre_moments(int n, double t, double lower,
+                               dd_real *alpha, dd_real *beta, dd_real *moments)
+{
+        int i;
+        dd_real tt = dd_sqrt(dd_from_d(t));
+        dd_real t_inv = dd_d_div(.5, dd_from_d(t));
+        dd_real t2_inv = dd_d_div(.5, dd_mul_dd(t, t));
+        dd_real e0 = dd_mul(dd_exp(dd_from_d(-t)), t_inv);
+        dd_real l00 = dd_from_d(0.);
+        dd_real l01 = dd_from_d(1.);
+        dd_real fac0, fac1, l02;
+
+        alpha[0] = t_inv;
+        beta[0] = dd_from_d(0.);
+        if (lower == 0) {
+                moments[0] = dd_mul(dd_div(DD_SQRTPIE4, tt), dd_erf(tt));
+                moments[1] = dd_neg(dd_mul(l01, e0));
+                for (i = 1; i < n - 1; i++) {
+                        alpha[i] = dd_mul_d(t_inv, i * 4 + 1);
+                        beta[i] = dd_mul_d(t2_inv, i * (i * 2 - 1));
+                        fac0 = dd_mul_d(t_inv, i * 4 - 1);
+                        fac1 = dd_mul_d(t2_inv, (i - 1) * (i * 2 - 1));
+                        l02 = dd_sub(dd_mul(dd_d_sub(1., fac0), l01), dd_mul(fac1, l00));
+                        l00 = l01;
+                        l01 = l02;
+                        moments[i+1] = dd_neg(dd_mul(l01, e0));
+                }
+        } else {
+                dd_real lower2 = dd_mul_dd(lower, lower);
+                dd_real l10 = dd_from_d(0.);
+                dd_real l11 = dd_from_d(1.);
+                dd_real l12;
+                dd_real et = dd_mul(dd_mul_d(dd_exp(dd_neg(dd_mul_d(lower2, t))), lower), t_inv);
+                moments[0] = dd_mul(dd_div(DD_SQRTPIE4, tt),
+                                    dd_sub(dd_erfc(dd_mul_d(tt, lower)), dd_erfc(tt)));
+                moments[1] = dd_sub(dd_mul(l11, et), dd_mul(l01, e0));
+                for (i = 1; i < n - 1; i++) {
+                        alpha[i] = dd_mul_d(t_inv, i * 4 + 1);
+                        beta[i] = dd_mul_d(t2_inv, i * (i * 2 - 1));
+                        fac0 = dd_mul_d(t_inv, i * 4 - 1);
+                        fac1 = dd_mul_d(t2_inv, (i - 1) * (i * 2 - 1));
+                        l12 = dd_sub(dd_mul(dd_sub(lower2, fac0), l11), dd_mul(fac1, l10));
+                        l10 = l11;
+                        l11 = l12;
+                        l02 = dd_sub(dd_mul(dd_d_sub(1., fac0), l01), dd_mul(fac1, l00));
+                        l00 = l01;
+                        l01 = l02;
+                        moments[i+1] = dd_sub(dd_mul(l11, et), dd_mul(l01, e0));
+                }
+        }
+}
+
+static void ddnaive_jacobi_moments(int n, double t, double lower, dd_real *mus)
+{
+        int i, j, k;
+        dd_real s;
+        dd_real fmt[MXRYSROOTS * 2];
+        dd_real *coef;
+        int *order;
+
+        fmt_dderfc_like(fmt, t, lower, n - 1);
+
+        for (i = 0; i < n; i++) {
+                coef = ddJACOBI_COEF + i * (i + 1) / 2;
+                order = JACOBI_COEF_ORDER + i * (i + 1) / 2;
+                s = dd_from_d(0.);
+                for (j = 0; j <= i; j++) {
+                        k = order[j];
+                        s = dd_add(s, dd_mul(coef[k], fmt[k]));
+                }
+                mus[i] = s;
+        }
+}
+
+// Flocke's recipe JCP, 131, 064107
+static void ddflocke_jacobi_moments(int n, double t, dd_real *mus)
+{
+        if (t < SMALLX_LIMIT) {
+                return ddnaive_jacobi_moments(n, t, 0., mus);
+        }
+
+        dd_real t_inv = dd_d_div(.5, dd_from_d(t));
+        dd_real mu1 = dd_from_d(1.); // can be arbitrary number != 0
+        dd_real mu2 = dd_from_d(0.);
+        dd_real mu0, rn;
+        int i, k;
+
+        // Miller algorithm
+        // The unnormalized mu grow by up to ~1e10 per step for small t, which
+        // overflows the double exponent range of dd_real (__float128 does not
+        // need this).  They are rescaled by 2^-600 (exactly) when needed; the
+        // common factor cancels in norm below.
+        assert((size_t)(n - 1 + FLOCKE_EXTRA_ORDER_FOR_QP) <
+               sizeof(ddJACOBI_SN) / sizeof(ddJACOBI_SN[0]));
+        for (i = n - 1 + FLOCKE_EXTRA_ORDER_FOR_QP; i >= n; i--) {
+                rn = dd_add(dd_mul_d(t_inv, 2 * i + 3), ddJACOBI_RN_PART2[i]);
+                mu0 = dd_div(dd_sub(mu2, dd_mul(rn, mu1)), ddJACOBI_SN[i]);
+                mu2 = mu1;
+                mu1 = mu0;
+                if (fabs(mu1.hi) > 0x1p+600) {
+                        mu1 = dd_mul_pwr2(mu1, 0x1p-600);
+                        mu2 = dd_mul_pwr2(mu2, 0x1p-600);
+                }
+        }
+        for (; i >= 0; i--) {
+                rn = dd_add(dd_mul_d(t_inv, 2 * i + 3), ddJACOBI_RN_PART2[i]);
+                mu0 = dd_div(dd_sub(mu2, dd_mul(rn, mu1)), ddJACOBI_SN[i]);
+                mus[i] = mu0;
+                mu2 = mu1;
+                mu1 = mu0;
+                if (fabs(mu1.hi) > 0x1p+600) {
+                        for (k = i; k < n; k++) {
+                                mus[k] = dd_mul_pwr2(mus[k], 0x1p-600);
+                        }
+                        mu0 = mus[i];
+                        mu1 = mu0;
+                        mu2 = dd_mul_pwr2(mu2, 0x1p-600);
+                }
+        }
+
+        dd_real tt = dd_sqrt(dd_from_d(t));
+        // fmt[0]/mu0
+        dd_real norm = dd_div(dd_div(dd_mul(DD_SQRTPIE4, dd_erf(tt)), tt), mu0);
+        for (i = 0; i < n; i++) {
+                mus[i] = dd_mul(mus[i], norm);
+        }
+}
+
+static void ddwheeler_recursion(int n, dd_real *alpha, dd_real *beta, dd_real *moments,
+                                dd_real *a, dd_real *b)
+{
+        int i, j, nc;
+        dd_real a0 = dd_add(alpha[0], dd_div(moments[1], moments[0]));
+        dd_real b0 = dd_from_d(0.);
+        dd_real a1, b1;
+        a[0] = a0;
+        b[0] = b0;
+        dd_real buf[MXRYSROOTS * 4];
+        dd_real *s0 = moments;
+        dd_real *sm = buf;
+        dd_real *sk = buf + n * 2;
+        dd_real *swap;
+        for (i = 2; i < n * 2; i++) {
+                sm[i] = dd_from_d(0.);
+        }
+
+        for (i = 1; i < n; i++) {
+                nc = 2 * (n - i);
+                for (j = 0; j < nc; j++) {
+                        sk[j] = dd_add(dd_sub(dd_sub(dd_mul(beta[i+j], s0[j]),
+                                                     dd_mul(dd_sub(a0, alpha[i+j]), s0[1+j])),
+                                              dd_mul(b0, sm[2+j])),
+                                       s0[2+j]);
+                }
+                a1 = dd_add(dd_sub(alpha[i], dd_div(s0[1], s0[0])), dd_div(sk[1], sk[0]));
+                b1 = dd_div(sk[0], s0[0]);
+                a[i] = a1;
+                b[i] = b1;
+                a0 = a1;
+                b0 = b1;
+                swap = sm;
+                sm = s0;
+                s0 = sk;
+                sk = swap;
+        }
+}
+
+static int ddrys_wheeler_partial(int n, dd_real *alpha, dd_real *beta, dd_real *moments,
+                                 double *roots, double *weights)
+{
+        dd_real a[MXRYSROOTS + MXRYSROOTS];
+        dd_real *b = a + n;
+        double da[MXRYSROOTS + MXRYSROOTS + MXRYSROOTS*MXRYSROOTS];
+        double *db = da + n;
+        double *c0 = db + n;
+        double mu0 = dd_to_d(moments[0]);
+        int i, k;
+
+        ddwheeler_recursion(n, alpha, beta, moments, a, b);
+
+        da[0] = dd_to_d(a[0]);
+        for (i = 1; i < n; i++) {
+                if (dd_lt_d(b[i], 1e-32)) {
+                        // very likely we will get numerical issues
+                        if (dd_lt_d(b[i], 0.)) {
+                                fprintf(stderr, "libcint qrys_wheeler singular value n=%d i=%d b=%g\n",
+                                        n, i, dd_to_d(b[i]));
+                                // Approximate the quadrature. higher order roots are set to 0
+                                for (k = i; k < n; k++) {
+                                        roots[k] = 0;
+                                        weights[k] = 0;
+                                }
+                                n = i;
+                                break;
+                        }
+                }
+                da[i] = dd_to_d(a[i]);
+                db[i] = dd_to_d(dd_sqrt(b[i]));
+        }
+
+        int error = _CINTdiagonalize(n, da, db+1, roots, c0);
+
+        for (i = 0; i < n; i++) {
+                roots[i] = roots[i] / (1 - roots[i]);
+                weights[i] = c0[i * n] * c0[i * n] * mu0;
+        }
+        return error;
+}
+
+int CINTqrys_laguerre(int n, double x, double lower, double *roots, double *weights)
+{
+        dd_real moments[MXRYSROOTS * 6];
+        dd_real *alpha = moments + n * 2;
+        dd_real *beta = alpha + n * 2;
+
+        ddlaguerre_moments(n * 2, x, lower, alpha, beta, moments);
+
+        return ddrys_wheeler_partial(n, alpha, beta, moments, roots, weights);
+}
+
+int CINTqrys_jacobi(int n, double x, double lower, double *roots, double *weights)
+{
+        dd_real moments[MXRYSROOTS*2];
+        dd_real *alpha = ddJACOBI_ALPHA;
+        dd_real *beta = ddJACOBI_BETA;
+
+        if (lower == 0) {
+                ddflocke_jacobi_moments(n * 2, x, moments);
+        } else {
+                ddnaive_jacobi_moments(n * 2, x, lower, moments);
+        }
+        return ddrys_wheeler_partial(n, alpha, beta, moments, roots, weights);
+}
+#endif  // HAVE_QUADMATH_H / WITH_DOUBLE_DOUBLE

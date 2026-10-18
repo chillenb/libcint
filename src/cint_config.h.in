@@ -5,6 +5,7 @@
 #cmakedefine HAVE_FABSL
 
 #cmakedefine HAVE_QUADMATH_H
+#cmakedefine WITH_DOUBLE_DOUBLE
 
 #cmakedefine WITH_RANGE_COULOMB
 

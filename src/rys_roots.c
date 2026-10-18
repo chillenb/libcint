@@ -31,7 +31,7 @@ static int rys_root3(double x, double *roots, double *weights);
 static int rys_root4(double x, double *roots, double *weights);
 static int rys_root5(double x, double *roots, double *weights);
 typedef int QuadratureFunction(int n, double x, double lower, double *roots, double *weights);
-#ifndef HAVE_QUADMATH_H
+#if !defined(HAVE_QUADMATH_H) && !defined(WITH_DOUBLE_DOUBLE)
 #define CINTqrys_schmidt        CINTlrys_schmidt
 #define CINTqrys_laguerre       CINTlrys_laguerre
 #define CINTqrys_jacobi         CINTlrys_jacobi
@@ -2012,6 +2012,128 @@ int CINTqrys_schmidt(int nroots, double x, double lower, double *roots, double *
         }
 
         dum0 = 1 / fmt_ints[0];
+        for (k = 0; k < nroots; ++k) {
+                root = rt[k];
+                if (root == 1) {
+                        roots[k] = 0;
+                        weights[k] = 0;
+                        continue;
+                }
+
+                dum = dum0;
+                for (j = 1; j < nroots; ++j) {
+                        order = j;
+                        a = cs + j * nroots1;
+                        // poly = poly_value1(cs[:order+1,j], order, root);
+                        POLYNOMIAL_VALUE1(poly, a, order, root);
+                        dum += poly * poly;
+                }
+                roots[k] = root / (1 - root);
+                weights[k] = 1 / dum;
+        }
+        return 0;
+}
+
+#elif defined(WITH_DOUBLE_DOUBLE)
+#define DD_SET_ZERO(a, n, start) \
+        for (k = start; k < n; ++k) { \
+                for (i = 0; i < n; ++i) { \
+                        a[i + k * n] = dd_from_d(0.); \
+                } \
+        } \
+
+static int R_ddsmit(dd_real *cs, dd_real *fmt_ints, int n)
+{
+        int i, j, k;
+        dd_real fac, dot, tmp;
+        dd_real v[MXRYSROOTS];
+
+        fac = dd_neg(dd_div(fmt_ints[1], fmt_ints[0]));
+        tmp = dd_add(fmt_ints[2], dd_mul(fac, fmt_ints[1]));
+        if (dd_le_d(tmp, 0.)) {
+                fprintf(stderr, "libcint::rys_roots negative value in dd_sqrt for roots %d (j=1)\n", n-1);
+                DD_SET_ZERO(cs, n, 1);
+                return 1;
+        }
+        tmp = dd_d_div(1., dd_sqrt(tmp));
+        cs[0+0*n] = dd_d_div(1., dd_sqrt(fmt_ints[0]));
+        cs[0+1*n] = dd_mul(fac, tmp);
+        cs[1+1*n] = tmp;
+
+        for (j = 2; j < n; ++j) {
+                for (k = 0; k < j; ++k) {
+                        v[k] = dd_from_d(0.);
+                }
+                fac = fmt_ints[j + j];
+                for (k = 0; k < j; ++k) {
+                        dot = dd_from_d(0.);
+                        for (i = 0; i <= k; ++i) {
+                                dot = dd_add(dot, dd_mul(cs[i + k * n], fmt_ints[i+j]));
+                        }
+                        for (i = 0; i <= k; ++i) {
+                                v[i] = dd_sub(v[i], dd_mul(dot, cs[i + k * n]));
+                        }
+                        fac = dd_sub(fac, dd_sqr(dot));
+                }
+
+                if (dd_le_d(fac, 0.)) {
+                        // set rest coefficients to 0
+                        DD_SET_ZERO(cs, n, j);
+                        if (fac.hi == 0) {
+                                return 0;
+                        }
+                        fprintf(stderr, "libcint::rys_roots negative value in dd_sqrt for roots %d (j=%d)\n", n-1, j);
+                        return j;
+                }
+                fac = dd_d_div(1., dd_sqrt(fac));
+                cs[j + j * n] = fac;
+                for (k = 0; k < j; ++k) {
+                        cs[k + j * n] = dd_mul(fac, v[k]);
+                }
+        }
+        return 0;
+}
+
+int CINTqrys_schmidt(int nroots, double x, double lower, double *roots, double *weights)
+{
+        int i, k, j, order, error;
+        int nroots1 = nroots + 1;
+        dd_real fmt_ints[MXRYSROOTS * 2 + MXRYSROOTS * MXRYSROOTS];
+        dd_real *qcs = fmt_ints + nroots1 * 2;
+        double rt[MXRYSROOTS + MXRYSROOTS * MXRYSROOTS];
+        double *cs = rt + nroots;
+        double *a;
+        double root, poly, dum, dum0;
+
+        fmt_dderfc_like(fmt_ints, x, lower, nroots*2);
+
+        if (fmt_ints[0].hi == 0) {
+                for (k = 0; k < nroots; ++k) {
+                        roots[k] = 0;
+                        weights[k] = 0;
+                }
+                return 0;
+        }
+
+        if (nroots == 1) {
+                rt[0] = dd_to_d(dd_div(fmt_ints[1], fmt_ints[0]));
+        } else {
+                error = R_ddsmit(qcs, fmt_ints, nroots1);
+                if (error) {
+                        return error;
+                }
+                for (k = 1; k < nroots1; k++) {
+                        for (i = 0; i <= k; i++) {
+                                cs[k * nroots1 + i] = dd_to_d(qcs[k * nroots1 + i]);
+                        }
+                }
+                error = _CINT_polynomial_roots(rt, cs, nroots);
+                if (error) {
+                        return error;
+                }
+        }
+
+        dum0 = dd_to_d(dd_d_div(1., fmt_ints[0]));
         for (k = 0; k < nroots; ++k) {
                 root = rt[k];
                 if (root == 1) {

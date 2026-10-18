@@ -196,6 +196,23 @@ Installation
     cmake -DWITH_RANGE_COULOMB ..
     make install
 
+* Double-double arithmetic instead of quadmath (optional)::
+
+    mkdir build; cd build
+    cmake -DWITH_DOUBLE_DOUBLE=1 ..
+    make install
+
+  Rys quadratures with many roots or short-range attenuation use
+  quadruple precision (libquadmath) when it is available, and long double
+  otherwise.  On platforms where long double is the same as double (e.g.
+  Apple arm64, MSVC), these quadratures are inaccurate or fail.
+  WITH_DOUBLE_DOUBLE uses double-double arithmetic (~106-bit mantissa, part
+  of it ported from the QD library) and does not depend on libquadmath.
+  It is about 2-3 times faster than libquadmath and gives the same
+  accuracy for regular Rys roots; for short-range Rys roots, which are
+  precision limited, about 2 digits are lost relative to quadmath.
+  Do not compile with -ffast-math.
+
 
 Available Integrals
 -------------------
